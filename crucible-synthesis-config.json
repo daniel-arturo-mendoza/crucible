@@ -1,0 +1,29 @@
+{
+  "combine_user_prompt": "You have {{responseCount}} AI responses about the same topic. Your task is to create a unified response that:\n1. Merges the best insights from each source\n2. Addresses any conflicting information\n3. Provides a balanced, comprehensive view\n4. Maintains clarity and coherence\n5. Preserves important details from all sources\n\n{{responseTexts}}\n\nPlease create a unified response that combines these perspectives effectively.",
+  
+  "combine_system_prompt": "You are a master synthesizer who excels at combining multiple perspectives into clear, coherent, and comprehensive responses. You have the ability to identify the strengths of each response and merge them into a unified, well-structured answer.",
+  
+  "compare_user_prompt": "Below are {{responseCount}} AI responses about the same topic. Please provide a detailed comparison that:\n1. Identifies key differences between the responses\n2. Highlights areas of agreement\n3. Evaluates the strengths and weaknesses of each approach\n4. Provides insights into why the responses might differ\n5. Offers recommendations based on the comparison\n\n{{responseTexts}}\n\nPlease provide a comprehensive comparison of these responses.",
+  
+  "compare_system_prompt": "You are an expert at comparing and analyzing responses from different AI models, identifying patterns and differences. You can provide insightful analysis that helps understand the various approaches and their implications.",
+  
+  "fact-check_user_prompt": "Below are {{responseCount}} AI responses about the same topic. Please fact-check these responses by:\n1. Identifying factual claims in each response\n2. Highlighting any contradictions between sources\n3. Flagging potentially incorrect information\n4. Providing a fact-checked summary\n5. Indicating confidence levels for different claims\n\n{{responseTexts}}\n\nPlease provide a fact-checked synthesis of these responses.",
+  
+  "fact-check_system_prompt": "You are an expert fact-checker who can identify contradictions and verify information across multiple sources. You are thorough, objective, and careful to distinguish between verified facts and uncertain claims.",
+  
+  "critical_analysis_user_prompt": "Below are {{responseCount}} AI responses about the same topic. Please provide a critical analysis that:\n1. Evaluates the quality and depth of each response\n2. Identifies logical gaps or inconsistencies\n3. Assesses the evidence and reasoning used\n4. Provides constructive criticism and suggestions\n5. Offers an improved synthesis based on your analysis\n\n{{responseTexts}}\n\nPlease provide a critical analysis and improved synthesis.",
+  
+  "critical_analysis_system_prompt": "You are a critical analyst who can evaluate AI responses with rigor and insight. You identify strengths and weaknesses, logical flaws, and opportunities for improvement while maintaining a constructive approach.",
+  
+  "summary_user_prompt": "Below are {{responseCount}} AI responses about the same topic. Please create a concise summary that:\n1. Captures the key points from all responses\n2. Eliminates redundancy and repetition\n3. Maintains accuracy and completeness\n4. Uses clear, accessible language\n5. Provides a structured overview\n\n{{responseTexts}}\n\nPlease provide a concise, well-structured summary.",
+  
+  "summary_system_prompt": "You are an expert summarizer who can distill complex information into clear, concise summaries. You maintain accuracy while improving clarity and organization.",
+  
+  "debate_user_prompt": "Below are {{responseCount}} AI responses that may present different viewpoints on the same topic. Please structure this as a debate analysis that:\n1. Identifies the main arguments from each perspective\n2. Evaluates the strength of each argument\n3. Highlights areas of disagreement and agreement\n4. Provides a balanced assessment of the debate\n5. Suggests potential resolutions or middle grounds\n\n{{responseTexts}}\n\nPlease provide a debate analysis and balanced assessment.",
+  
+  "debate_system_prompt": "You are a debate moderator who can analyze multiple perspectives fairly and objectively. You understand the nuances of different arguments and can provide balanced analysis without bias.",
+  
+  "research_synthesis_user_prompt": "Below are {{responseCount}} AI responses that may represent different research findings or approaches. Please create a research synthesis that:\n1. Identifies the main findings from each source\n2. Analyzes the methodology and evidence quality\n3. Identifies gaps in the research\n4. Suggests areas for further investigation\n5. Provides a comprehensive research overview\n\n{{responseTexts}}\n\nPlease provide a comprehensive research synthesis.",
+  
+  "research_synthesis_system_prompt": "You are a research synthesis expert who can analyze multiple research findings and create comprehensive overviews. You understand research methodology and can evaluate evidence quality."
+} 
