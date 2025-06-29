@@ -1,0 +1,41 @@
+service: crucible-backend
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+  environment:
+    OPENAI_API_KEY: ${env:OPENAI_API_KEY, ''}
+    DEEPSEEK_API_KEY: ${env:DEEPSEEK_API_KEY, ''}
+    DEEPSEEK_API_URL: ${env:DEEPSEEK_API_URL, 'https://api.deepseek.com/v1'}
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+          Resource: "*"
+
+functions:
+  api:
+    handler: src/lambda.handler
+    events:
+      - http:
+          path: /{proxy+}
+          method: ANY
+          cors: true
+    timeout: 30
+    memorySize: 512
+
+plugins:
+  - serverless-offline
+
+custom:
+  serverless-offline:
+    httpPort: 3000
+    noPrependStageInUrl: true 

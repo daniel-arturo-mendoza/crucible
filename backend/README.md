@@ -9,6 +9,7 @@ The backend integrates with the `crucible-core` library to provide:
 - Response synthesis to reduce bias
 - RESTful API endpoints
 - Error handling and logging
+- **AWS Lambda deployment ready**
 
 ## Architecture
 
@@ -16,11 +17,14 @@ The backend uses a clean architecture with:
 - **crucible-core**: Core library for AI provider management and synthesis
 - **Express.js**: Web framework for REST API
 - **Environment-based configuration**: API keys and settings via `.env`
+- **Serverless-ready**: Can be deployed as AWS Lambda functions
 
 ### Key Files
 
 - `src/index.js` — Server startup and configuration
 - `src/app.js` — Express app with API endpoints
+- `src/lambda.js` — AWS Lambda handler
+- `serverless.yml` — Serverless Framework configuration
 - `package.json` — Dependencies including local crucible-core
 
 ## Setup
@@ -285,4 +289,87 @@ The backend integrates crucible-core as a local dependency, providing a clean se
 - **API Layer**: Express routes and request handling
 - **Core Logic**: Multi-provider queries and synthesis via crucible-core
 
-This architecture allows the core library to be used independently while the backend provides a RESTful interface. 
+This architecture allows the core library to be used independently while the backend provides a RESTful interface.
+
+## Deployment
+
+### AWS Lambda Deployment
+
+The backend is configured for AWS Lambda deployment using the Serverless Framework.
+
+#### Prerequisites
+
+1. **AWS CLI configured** with appropriate permissions
+2. **Serverless Framework** installed globally:
+   ```bash
+   npm install -g serverless
+   ```
+
+3. **Environment variables** set in AWS Systems Manager Parameter Store or as Lambda environment variables
+
+#### Deployment Steps
+
+1. **Install dependencies:**
+   ```bash
+   cd backend
+   npm install
+   ```
+
+2. **Deploy to AWS:**
+   ```bash
+   # Deploy to dev stage
+   npm run deploy
+   
+   # Deploy to production
+   npm run deploy:prod
+   ```
+
+3. **Remove deployment:**
+   ```bash
+   npm run remove
+   ```
+
+#### Environment Variables in AWS
+
+Set these environment variables in your Lambda function:
+
+- `OPENAI_API_KEY`: Your OpenAI API key
+- `DEEPSEEK_API_KEY`: Your DeepSeek API key  
+- `DEEPSEEK_API_URL`: DeepSeek API URL (default: https://api.deepseek.com/v1)
+
+#### Local Testing with Serverless
+
+```bash
+# Test locally with serverless-offline
+npm run dev
+
+# The API will be available at http://localhost:3000
+```
+
+### Alternative Deployment Options
+
+#### Docker Deployment
+
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+EXPOSE 3000
+CMD ["npm", "start"]
+```
+
+#### Traditional VPS Deployment
+
+```bash
+# Install PM2 for process management
+npm install -g pm2
+
+# Start the application
+pm2 start src/index.js --name crucible-backend
+
+# Save PM2 configuration
+pm2 save
+pm2 startup
+``` 

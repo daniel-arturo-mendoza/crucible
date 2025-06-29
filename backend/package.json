@@ -5,7 +5,10 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
+    "dev": "nodemon src/index.js",
+    "deploy": "serverless deploy",
+    "deploy:prod": "serverless deploy --stage prod",
+    "remove": "serverless remove"
   },
   "dependencies": {
     "crucible-core": "file:../crucible-core",
@@ -13,9 +16,12 @@
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "openai": "^4.20.1",
-    "axios": "^1.6.2"
+    "axios": "^1.6.2",
+    "@vendia/serverless-express": "^4.12.6"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.0.2",
+    "serverless": "^3.38.0",
+    "serverless-offline": "^13.3.0"
   }
 } 
