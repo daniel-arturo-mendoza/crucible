@@ -87,6 +87,75 @@ console.log(synthesis.synthesized); // Combined response
 console.log(synthesis.sources); // Original responses
 ```
 
+## Backend Integration
+
+This library is designed to be used as a core component in larger applications. In the Crucible project, it's integrated as a local dependency in the backend:
+
+### Backend Usage
+
+```javascript
+// In backend/src/app.js
+const { CrucibleCore } = require('../crucible-core');
+
+const crucible = new CrucibleCore({
+  synthesis: {
+    model: 'gpt-4',
+    temperature: 0.3
+  },
+  providers: {
+    openai: {
+      apiKey: process.env.OPENAI_API_KEY,
+      model: 'gpt-4'
+    },
+    deepseek: {
+      apiKey: process.env.DEEPSEEK_API_KEY,
+      apiUrl: process.env.DEEPSEEK_API_URL
+    }
+  }
+});
+
+// Express route handlers
+app.post('/query', async (req, res) => {
+  const result = await crucible.query(req.body.prompt, ['openai', 'deepseek']);
+  res.json(result);
+});
+
+app.post('/query-and-synthesize', async (req, res) => {
+  const synthesis = await crucible.queryAndSynthesize(
+    req.body.prompt, 
+    ['openai', 'deepseek']
+  );
+  res.json(synthesis);
+});
+```
+
+### Local Development Setup
+
+For local development with the Crucible backend:
+
+1. **Install as local dependency:**
+   ```bash
+   # In backend/package.json
+   {
+     "dependencies": {
+       "crucible-core": "file:../crucible-core"
+     }
+   }
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   cd backend
+   npm install
+   ```
+
+3. **Use in your application:**
+   ```javascript
+   const { CrucibleCore } = require('crucible-core');
+   ```
+
+This approach allows the core library to be developed independently while being used in the backend application.
+
 ## Configuration
 
 ### Synthesis Prompt Configuration
