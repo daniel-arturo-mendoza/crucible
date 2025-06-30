@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { CrucibleCore } = require('crucible-core');
+const { CrucibleCore } = require('../crucible-core/index');
 
 const app = express();
 
@@ -19,7 +19,7 @@ const crucible = new CrucibleCore({
   synthesis: {
     provider: 'openai',
     apiKey: process.env.OPENAI_API_KEY,
-    configPath: path.join(__dirname, '../../crucible-synthesis-config.json')
+    configPath: path.join(__dirname, '../crucible-synthesis-config.json')
   }
 });
 

@@ -6,22 +6,24 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "deploy": "serverless deploy",
-    "deploy:prod": "serverless deploy --stage prod",
-    "remove": "serverless remove"
+    "deploy": "npm run build && npx serverless deploy",
+    "deploy:prod": "npm run build && npx serverless deploy --stage prod",
+    "build": "npm install --production && cp ../crucible-synthesis-config.json .",
+    "remove": "npx serverless remove"
   },
   "dependencies": {
-    "crucible-core": "file:../crucible-core",
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
-    "openai": "^4.20.1",
+    "@vendia/serverless-express": "^4.12.6",
     "axios": "^1.6.2",
-    "@vendia/serverless-express": "^4.12.6"
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "openai": "^4.20.1"
   },
   "devDependencies": {
+    "dotenv": "^17.0.0",
     "nodemon": "^3.0.2",
-    "serverless": "^3.38.0",
+    "serverless": "^3.40.0",
+    "serverless-dotenv-plugin": "^6.0.0",
+    "serverless-esbuild": "^1.55.1",
     "serverless-offline": "^13.3.0"
   }
-} 
+}

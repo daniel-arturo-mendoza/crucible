@@ -21,6 +21,10 @@ provider:
             - logs:PutLogEvents
           Resource: "*"
 
+package:
+  patterns:
+    - 'crucible-synthesis-config.json'
+
 functions:
   api:
     handler: src/lambda.handler
@@ -33,9 +37,22 @@ functions:
     memorySize: 512
 
 plugins:
+  - serverless-dotenv-plugin
+  - serverless-esbuild
   - serverless-offline
 
 custom:
+  dotenv:
+    path: ../.env
+  esbuild:
+    bundle: true
+    minify: false
+    sourcemap: false
+    exclude:
+      - aws-sdk
+      - dotenv
+    packager: npm
+    target: node18
   serverless-offline:
     httpPort: 3000
     noPrependStageInUrl: true 
