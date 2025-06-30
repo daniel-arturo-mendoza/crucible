@@ -19,7 +19,7 @@ const crucible = new CrucibleCore({
   synthesis: {
     provider: 'openai',
     apiKey: process.env.OPENAI_API_KEY,
-    configPath: path.join(__dirname, '../crucible-synthesis-config.json')
+    configPath: path.join(__dirname, '../../crucible-synthesis-config.json')
   }
 });
 

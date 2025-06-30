@@ -58,6 +58,8 @@ DEEPSEEK_API_KEY=your_deepseek_api_key_here
 DEEPSEEK_API_URL=https://api.deepseek.com/v1
 ```
 
+**Note**: The `crucible-synthesis-config.json` file should remain in the root directory. The backend is configured to look for it there.
+
 ### 5. Deploy to AWS
 
 ```bash

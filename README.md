@@ -13,7 +13,7 @@ Crucible is designed to provide more balanced and comprehensive AI responses by:
 
 - `backend/` — Node.js/Express backend with REST API
 - `crucible-core/` — Core library for multi-provider AI querying and synthesis
-- `crucible-synthesis-config.json` — Configuration for synthesis prompts
+- `crucible-synthesis-config.json` — Configuration for synthesis prompts (must be in root directory)
 
 ## Quick Start
 
