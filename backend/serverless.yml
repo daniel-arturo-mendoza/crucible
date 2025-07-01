@@ -24,6 +24,11 @@ provider:
 package:
   patterns:
     - 'crucible-synthesis-config.json'
+    - '../crucible-core/src/**'
+    - '!../crucible-core/node_modules/**'
+    - '!../crucible-core/examples/**'
+    - '!../crucible-core/README.md'
+    - '!../crucible-core/package-lock.json'
 
 functions:
   api:

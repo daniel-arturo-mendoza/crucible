@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { CrucibleCore } = require('../crucible-core/index');
+const { CrucibleCore } = require('../../crucible-core/src/index');
 
 const app = express();
 
