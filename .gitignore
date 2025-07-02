@@ -4,4 +4,6 @@ crucible-core/node_modules/
 backend/node_modules/
 .env
 .serverless/
-backend/.serverless/ 
+backend/.serverless/
+.esbuild/
+backend/.esbuild/ 
