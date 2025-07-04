@@ -18,6 +18,9 @@ if (process.env.NODE_ENV !== 'production') {
   console.log('Environment variables loaded:', {
     OPENAI_API_KEY: !!process.env.OPENAI_API_KEY,
     DEEPSEEK_API_KEY: !!process.env.DEEPSEEK_API_KEY,
-    DEEPSEEK_API_URL: process.env.DEEPSEEK_API_URL
+    DEEPSEEK_API_URL: process.env.DEEPSEEK_API_URL,
+    TWILIO_ACCOUNT_SID: !!process.env.TWILIO_ACCOUNT_SID,
+    TWILIO_AUTH_TOKEN: !!process.env.TWILIO_AUTH_TOKEN,
+    TWILIO_WHATSAPP_NUMBER: !!process.env.TWILIO_WHATSAPP_NUMBER
   });
 } 

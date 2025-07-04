@@ -11,6 +11,9 @@ provider:
     OPENAI_API_KEY: ${env:OPENAI_API_KEY, ''}
     DEEPSEEK_API_KEY: ${env:DEEPSEEK_API_KEY, ''}
     DEEPSEEK_API_URL: ${env:DEEPSEEK_API_URL, 'https://api.deepseek.com/v1'}
+    TWILIO_ACCOUNT_SID: ${env:TWILIO_ACCOUNT_SID, ''}
+    TWILIO_AUTH_TOKEN: ${env:TWILIO_AUTH_TOKEN, ''}
+    TWILIO_WHATSAPP_NUMBER: ${env:TWILIO_WHATSAPP_NUMBER, ''}
   iam:
     role:
       statements:
