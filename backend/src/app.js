@@ -238,7 +238,9 @@ app.post('/whatsapp/webhook', async (req, res, next) => {
       userId,
       prompt,
       channel: 'whatsapp',
-      phoneNumber: senderNumber,
+      channelData: {
+        phoneNumber: senderNumber
+      },
       priority: 'normal'
     };
 
@@ -255,6 +257,201 @@ app.post('/whatsapp/webhook', async (req, res, next) => {
     });
   } catch (err) {
     console.error('Error in WhatsApp webhook:', err);
+    next(err);
+  }
+});
+
+// Mobile App Endpoints
+// Submit question from mobile app
+app.post('/mobile/question', async (req, res, next) => {
+  try {
+    const { userId, prompt, priority = 'normal' } = req.body;
+    
+    if (!userId || !prompt) {
+      return res.status(400).json({ error: 'userId and prompt are required' });
+    }
+
+    // Check if user is already locked (processing another request)
+    const isUserLocked = await userLock.isUserLocked(userId);
+    if (isUserLocked) {
+      return res.status(429).json({ 
+        error: 'User is busy processing another request',
+        message: 'Please wait a moment before sending another question'
+      });
+    }
+
+    // Enqueue the job for async processing
+    const jobData = {
+      userId,
+      prompt,
+      channel: 'mobile',
+      channelData: {
+        // Add any mobile-specific data here
+        appVersion: req.body.appVersion,
+        deviceId: req.body.deviceId
+      },
+      priority
+    };
+
+    const jobId = await jobQueue.enqueueJob(jobData);
+    console.log(`Enqueued mobile job ${jobId} for user ${userId}`);
+
+    res.json({ 
+      success: true, 
+      jobId,
+      message: 'Question submitted for processing',
+      status: 'pending'
+    });
+  } catch (err) {
+    console.error('Error in mobile question endpoint:', err);
+    next(err);
+  }
+});
+
+// Register FCM token for push notifications
+app.post('/mobile/register-token', async (req, res, next) => {
+  try {
+    const { userId, fcmToken, appVersion, deviceId, platform } = req.body;
+    
+    if (!userId || !fcmToken) {
+      return res.status(400).json({ error: 'userId and fcmToken are required' });
+    }
+
+    const UserManager = require('./services/userManager');
+    const userManager = new UserManager();
+
+    // Register or update FCM token
+    await userManager.registerFCMToken(userId, fcmToken, {
+      appVersion,
+      deviceId,
+      platform,
+      lastActivity: Date.now()
+    });
+
+    res.json({ 
+      success: true, 
+      message: 'FCM token registered successfully',
+      pushNotificationsEnabled: true
+    });
+  } catch (err) {
+    console.error('Error registering FCM token:', err);
+    next(err);
+  }
+});
+
+// Update push notification preferences
+app.post('/mobile/push-preferences', async (req, res, next) => {
+  try {
+    const { userId, enabled } = req.body;
+    
+    if (!userId || typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'userId and enabled (boolean) are required' });
+    }
+
+    const UserManager = require('./services/userManager');
+    const userManager = new UserManager();
+
+    // Update push notification preferences
+    await userManager.updatePushNotificationPreferences(userId, enabled);
+
+    res.json({ 
+      success: true, 
+      message: `Push notifications ${enabled ? 'enabled' : 'disabled'}`,
+      pushNotificationsEnabled: enabled
+    });
+  } catch (err) {
+    console.error('Error updating push preferences:', err);
+    next(err);
+  }
+});
+
+// Unregister FCM token
+app.delete('/mobile/unregister-token', async (req, res, next) => {
+  try {
+    const { userId } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+
+    const UserManager = require('./services/userManager');
+    const userManager = new UserManager();
+
+    // Remove FCM token
+    await userManager.removeFCMToken(userId);
+
+    res.json({ 
+      success: true, 
+      message: 'FCM token unregistered successfully'
+    });
+  } catch (err) {
+    console.error('Error unregistering FCM token:', err);
+    next(err);
+  }
+});
+
+// Get job status (for mobile app polling)
+app.get('/mobile/job/:jobId', async (req, res, next) => {
+  try {
+    const { jobId } = req.params;
+    const { userId } = req.query; // Optional: verify user owns this job
+    
+    const job = await jobQueue.getJob(jobId);
+    
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    // Optional: verify user owns this job
+    if (userId && job.userId !== userId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    res.json({
+      success: true,
+      job: {
+        jobId: job.jobId,
+        status: job.status,
+        prompt: job.prompt,
+        createdAt: job.createdAt,
+        updatedAt: job.updatedAt,
+        result: job.result,
+        channel: job.channel
+      }
+    });
+  } catch (err) {
+    console.error('Error getting job status:', err);
+    next(err);
+  }
+});
+
+// Get user's job history (for mobile app)
+app.get('/mobile/jobs/:userId', async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+    const { limit = 20, status } = req.query;
+    
+    let jobs = await jobQueue.getJobsByUser(userId, parseInt(limit));
+    
+    // Filter by status if specified
+    if (status) {
+      jobs = jobs.filter(job => job.status === status);
+    }
+
+    res.json({
+      success: true,
+      jobs: jobs.map(job => ({
+        jobId: job.jobId,
+        status: job.status,
+        prompt: job.prompt,
+        createdAt: job.createdAt,
+        updatedAt: job.updatedAt,
+        result: job.result,
+        channel: job.channel
+      }))
+    });
+  } catch (err) {
+    console.error('Error getting user jobs:', err);
     next(err);
   }
 });
@@ -358,6 +555,32 @@ app.get('/worker/status', async (req, res) => {
   try {
     const status = asyncWorker.getStatus();
     res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manual job processing endpoint (for testing and debugging)
+app.post('/worker/process', async (req, res) => {
+  try {
+    const { maxJobs = 5 } = req.body;
+    let processedCount = 0;
+    
+    // Process jobs manually
+    for (let i = 0; i < maxJobs; i++) {
+      const processed = await asyncWorker.processNextJob();
+      if (processed) {
+        processedCount++;
+      } else {
+        break; // No more jobs to process
+      }
+    }
+    
+    res.json({ 
+      success: true, 
+      processedCount,
+      message: `Processed ${processedCount} jobs`
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

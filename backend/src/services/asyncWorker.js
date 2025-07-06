@@ -2,10 +2,10 @@ const { CrucibleCore } = require('../../../crucible-core/src/index');
 const path = require('path');
 const jobQueue = require('./jobQueue');
 const userLock = require('./userLock');
-const TwilioService = require('./twilio');
+const ResponseRouter = require('./responseRouter');
 
 class AsyncWorker {
-  constructor() {
+  constructor(options = {}) {
     // Initialize Crucible Core
     this.crucible = new CrucibleCore({
       providers: {
@@ -24,14 +24,20 @@ class AsyncWorker {
       }
     });
 
-    // Initialize Twilio Service
-    this.twilioService = new TwilioService();
+    // Initialize Response Router
+    this.responseRouter = new ResponseRouter();
+
+    // Configuration
+    this.pollInterval = options.pollInterval || 5000; // 5 seconds
+    this.maxConcurrentJobs = options.maxConcurrentJobs || 3;
+    this.maxExecutionTime = options.maxExecutionTime || 600000; // 10 minutes (Lambda has 15 min max)
+    this.maxJobProcessingTime = options.maxJobProcessingTime || 300000; // 5 minutes per job
 
     // Worker state
     this.isRunning = false;
-    this.pollInterval = 5000; // 5 seconds
-    this.maxConcurrentJobs = 3;
     this.processingJobs = new Set();
+    this.pollingInterval = null;
+    this.startTime = null;
   }
 
   /**
@@ -45,9 +51,10 @@ class AsyncWorker {
 
     console.log('Starting async worker...');
     this.isRunning = true;
+    this.startTime = Date.now();
 
     // Start polling for jobs
-    this.pollForJobs();
+    this.startPolling();
   }
 
   /**
@@ -56,26 +63,53 @@ class AsyncWorker {
   stop() {
     console.log('Stopping async worker...');
     this.isRunning = false;
+    
+    if (this.pollingInterval) {
+      clearInterval(this.pollingInterval);
+      this.pollingInterval = null;
+    }
   }
 
   /**
-   * Main polling loop
+   * Start polling for jobs
    */
-  async pollForJobs() {
-    while (this.isRunning) {
+  startPolling() {
+    this.pollingInterval = setInterval(async () => {
+      if (!this.isRunning) {
+        return;
+      }
+
+      // Check if we're approaching Lambda timeout
+      if (this.isApproachingTimeout()) {
+        console.log('Approaching execution timeout, stopping worker gracefully');
+        this.stop();
+        return;
+      }
+
       try {
         // Check if we can process more jobs
         if (this.processingJobs.size < this.maxConcurrentJobs) {
           await this.processNextJob();
         }
-
-        // Wait before next poll
-        await this.sleep(this.pollInterval);
       } catch (error) {
         console.error('Error in async worker polling loop:', error);
-        await this.sleep(this.pollInterval);
       }
-    }
+    }, this.pollInterval);
+
+    console.log(`Started polling every ${this.pollInterval}ms`);
+  }
+
+  /**
+   * Check if we're approaching the execution timeout
+   */
+  isApproachingTimeout() {
+    if (!this.startTime) return false;
+    
+    const elapsed = Date.now() - this.startTime;
+    const timeRemaining = this.maxExecutionTime - elapsed;
+    
+    // Stop if we have less than 30 seconds remaining
+    return timeRemaining < 30000;
   }
 
   /**
@@ -87,21 +121,21 @@ class AsyncWorker {
       const pendingJobs = await jobQueue.getPendingJobs(1);
       
       if (pendingJobs.length === 0) {
-        return; // No jobs to process
+        return false; // No jobs to process
       }
 
       const job = pendingJobs[0];
       
       // Check if we're already processing this job
       if (this.processingJobs.has(job.jobId)) {
-        return;
+        return false;
       }
 
       // Check if user is already locked
       const isUserLocked = await userLock.isUserLocked(job.userId);
       if (isUserLocked) {
         console.log(`User ${job.userId} is already locked, skipping job ${job.jobId}`);
-        return;
+        return false;
       }
 
       // Start processing this job
@@ -113,8 +147,11 @@ class AsyncWorker {
         console.error(`Error processing job ${job.jobId}:`, error);
       });
 
+      return true; // Job started processing
+
     } catch (error) {
       console.error('Error getting pending jobs:', error);
+      return false;
     }
   }
 
@@ -122,9 +159,11 @@ class AsyncWorker {
    * Process a single job
    */
   async processJob(job) {
+    const startTime = Date.now();
+    
     try {
       // Lock the user
-      await userLock.lockUser(job.userId, 300); // 5 minutes lock
+      await userLock.lockUser(job.userId, Math.ceil(this.maxJobProcessingTime / 1000)); // Convert to seconds
       console.log(`Locked user ${job.userId} for job ${job.jobId}`);
 
       // Update job status to processing
@@ -134,15 +173,18 @@ class AsyncWorker {
       // Process with Crucible AI
       const crucibleResponse = await this.processWithCrucible(job.prompt);
       
-      // Send response via WhatsApp
-      await this.sendResponse(job, crucibleResponse);
+      // Route response to appropriate channel
+      await this.responseRouter.routeResponse(job, crucibleResponse, {
+        processingTime: Date.now() - startTime
+      });
 
       // Update job status to completed
       await jobQueue.updateJobStatus(job.jobId, 'completed', {
         response: crucibleResponse,
-        completedAt: Date.now()
+        completedAt: Date.now(),
+        processingTime: Date.now() - startTime
       });
-      console.log(`Completed job ${job.jobId}`);
+      console.log(`Completed job ${job.jobId} in ${Date.now() - startTime}ms`);
 
     } catch (error) {
       console.error(`Error processing job ${job.jobId}:`, error);
@@ -150,11 +192,12 @@ class AsyncWorker {
       // Update job status to failed
       await jobQueue.updateJobStatus(job.jobId, 'failed', {
         error: error.message,
-        failedAt: Date.now()
+        failedAt: Date.now(),
+        processingTime: Date.now() - startTime
       });
 
-      // Send error message to user
-      await this.sendErrorMessage(job, error.message);
+      // Route error response to appropriate channel
+      await this.responseRouter.routeErrorResponse(job, error.message);
     } finally {
       // Unlock the user
       try {
@@ -176,9 +219,9 @@ class AsyncWorker {
     try {
       const providers = ['openai', 'deepseek'];
       
-      // Add timeout to prevent hanging
+      // Add timeout to prevent hanging (5 minutes max per job)
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('AI processing timeout')), 30000); // 30 second timeout
+        setTimeout(() => reject(new Error('AI processing timeout')), this.maxJobProcessingTime);
       });
       
       const cruciblePromise = this.crucible.queryAndSynthesize(prompt, providers);
@@ -191,66 +234,24 @@ class AsyncWorker {
     }
   }
 
-  /**
-   * Send response via WhatsApp
-   */
-  async sendResponse(job, crucibleResponse) {
-    try {
-      if (!this.twilioService.isConfigured()) {
-        throw new Error('Twilio is not properly configured');
-      }
 
-      await this.twilioService.sendCrucibleResponse(
-        job.phoneNumber,
-        job.prompt,
-        crucibleResponse
-      );
-
-      console.log(`Sent response for job ${job.jobId} to ${job.phoneNumber}`);
-    } catch (error) {
-      console.error(`Error sending response for job ${job.jobId}:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Send error message to user
-   */
-  async sendErrorMessage(job, errorMessage) {
-    try {
-      if (!this.twilioService.isConfigured()) {
-        return; // Skip if Twilio not configured
-      }
-
-      let userFriendlyMessage = 'Sorry, I encountered an error processing your request. Please try again.';
-      
-      if (errorMessage === 'AI processing timeout') {
-        userFriendlyMessage = 'Sorry, your request took too long to process. Please try a simpler question or try again later.';
-      }
-
-      await this.twilioService.sendWhatsAppMessage(job.phoneNumber, userFriendlyMessage);
-      console.log(`Sent error message for job ${job.jobId} to ${job.phoneNumber}`);
-    } catch (error) {
-      console.error(`Error sending error message for job ${job.jobId}:`, error);
-    }
-  }
-
-  /**
-   * Utility function to sleep
-   */
-  sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
 
   /**
    * Get worker status
    */
   getStatus() {
+    const elapsed = this.startTime ? Date.now() - this.startTime : 0;
+    const timeRemaining = this.maxExecutionTime - elapsed;
+    
     return {
       isRunning: this.isRunning,
       processingJobs: Array.from(this.processingJobs),
       processingCount: this.processingJobs.size,
-      maxConcurrentJobs: this.maxConcurrentJobs
+      maxConcurrentJobs: this.maxConcurrentJobs,
+      pollInterval: this.pollInterval,
+      elapsedTime: elapsed,
+      timeRemaining: Math.max(0, timeRemaining),
+      approachingTimeout: this.isApproachingTimeout()
     };
   }
 }
