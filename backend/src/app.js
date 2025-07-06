@@ -5,6 +5,7 @@ const { CrucibleCore } = require('../../crucible-core/src/index');
 const TwilioService = require('./services/twilio');
 const userLock = require('./services/userLock');
 const jobQueue = require('./services/jobQueue');
+const AsyncWorker = require('./services/asyncWorker');
 
 const app = express();
 
@@ -28,6 +29,9 @@ const crucible = new CrucibleCore({
 
 // Initialize Twilio Service
 const twilioService = new TwilioService();
+
+// Initialize Async Worker
+const asyncWorker = new AsyncWorker();
 
 // Middleware: CORS
 app.use(cors());
@@ -214,46 +218,43 @@ app.post('/whatsapp/webhook', async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid webhook payload' });
     }
 
-    // Process the incoming message with Crucible
     const prompt = Body.trim();
-    const providers = ['openai', 'deepseek'];
-    
-    try {
-      // Add timeout to Crucible processing
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Processing timeout')), 25000); // 25 second timeout
-      });
-      
-      const cruciblePromise = crucible.queryAndSynthesize(prompt, providers);
-      const crucibleResponse = await Promise.race([cruciblePromise, timeoutPromise]);
-      
-      // Send response back to the sender
-      const senderNumber = From.replace('whatsapp:', '');
-      await twilioService.sendCrucibleResponse(senderNumber, prompt, crucibleResponse);
-      
-      res.json({ 
+    const senderNumber = From.replace('whatsapp:', '');
+    const userId = `whatsapp:${senderNumber}`;
+
+    // Check if user is already locked (processing another request)
+    const isUserLocked = await userLock.isUserLocked(userId);
+    if (isUserLocked) {
+      console.log(`User ${userId} is already locked, sending busy message`);
+      await twilioService.sendWhatsAppMessage(senderNumber, 'I\'m still processing your previous request. Please wait a moment before sending another message.');
+      return res.json({ 
         success: true, 
-        message: 'WhatsApp message processed and response sent'
-      });
-    } catch (crucibleError) {
-      console.error('Error processing with Crucible:', crucibleError);
-      
-      // Send appropriate error message to user
-      const senderNumber = From.replace('whatsapp:', '');
-      let errorMessage = 'Sorry, I encountered an error processing your request. Please try again.';
-      
-      if (crucibleError.message === 'Processing timeout') {
-        errorMessage = 'Sorry, your request took too long to process. Please try a simpler question or try again later.';
-      }
-      
-      await twilioService.sendWhatsAppMessage(senderNumber, errorMessage);
-      
-      res.json({ 
-        success: false, 
-        error: crucibleError.message
+        message: 'User is busy, sent busy message'
       });
     }
+
+    // Enqueue the job for async processing
+    const jobData = {
+      userId,
+      prompt,
+      channel: 'whatsapp',
+      phoneNumber: senderNumber,
+      priority: 'normal'
+    };
+
+    const jobId = await jobQueue.enqueueJob(jobData);
+    console.log(`Enqueued job ${jobId} for user ${userId}`);
+
+    // Send immediate acknowledgment
+    await twilioService.sendWhatsAppMessage(senderNumber, '🤖 I\'m processing your question. You\'ll receive my response shortly!');
+    
+    res.json({ 
+      success: true, 
+      jobId,
+      message: 'WhatsApp message enqueued for async processing'
+    });
   } catch (err) {
+    console.error('Error in WhatsApp webhook:', err);
     next(err);
   }
 });
@@ -329,6 +330,34 @@ app.post('/job-test/update', async (req, res) => {
   try {
     await jobQueue.updateJobStatus(jobId, status, result);
     res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Async Worker Control Endpoints
+app.post('/worker/start', async (req, res) => {
+  try {
+    await asyncWorker.start();
+    res.json({ success: true, message: 'Async worker started' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/worker/stop', async (req, res) => {
+  try {
+    asyncWorker.stop();
+    res.json({ success: true, message: 'Async worker stopped' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/worker/status', async (req, res) => {
+  try {
+    const status = asyncWorker.getStatus();
+    res.json(status);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
