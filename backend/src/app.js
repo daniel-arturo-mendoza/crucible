@@ -3,6 +3,7 @@ const cors = require('cors');
 const path = require('path');
 const { CrucibleCore } = require('../../crucible-core/src/index');
 const TwilioService = require('./services/twilio');
+const userLock = require('./services/userLock');
 
 const app = express();
 
@@ -253,6 +254,39 @@ app.post('/whatsapp/webhook', async (req, res, next) => {
     }
   } catch (err) {
     next(err);
+  }
+});
+
+// User Locking Test Endpoints (for local DynamoDB testing)
+app.post('/lock-test/lock', async (req, res) => {
+  const { userId, ttlSeconds } = req.body;
+  if (!userId) return res.status(400).json({ error: 'userId required' });
+  try {
+    await userLock.lockUser(userId, ttlSeconds);
+    res.json({ success: true, message: `User ${userId} locked.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/lock-test/status/:userId', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const locked = await userLock.isUserLocked(userId);
+    res.json({ userId, locked });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/lock-test/unlock', async (req, res) => {
+  const { userId } = req.body;
+  if (!userId) return res.status(400).json({ error: 'userId required' });
+  try {
+    await userLock.unlockUser(userId);
+    res.json({ success: true, message: `User ${userId} unlocked.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
