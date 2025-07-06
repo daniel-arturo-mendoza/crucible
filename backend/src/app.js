@@ -115,6 +115,20 @@ app.get('/providers', (req, res) => {
   res.json({ providers });
 });
 
+// Test endpoint for DynamoDB configuration
+app.get('/test-config', (req, res) => {
+  res.json({
+    environment: {
+      USER_LOCKS_TABLE: process.env.USER_LOCKS_TABLE,
+      JOB_QUEUE_TABLE: process.env.JOB_QUEUE_TABLE,
+      TWILIO_CONFIGURED: !!process.env.TWILIO_ACCOUNT_SID,
+      OPENAI_CONFIGURED: !!process.env.OPENAI_API_KEY,
+      DEEPSEEK_CONFIGURED: !!process.env.DEEPSEEK_API_KEY
+    },
+    message: 'Configuration test endpoint'
+  });
+});
+
 // WhatsApp endpoints
 // Send WhatsApp message
 app.post('/whatsapp/send', async (req, res, next) => {
