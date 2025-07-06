@@ -4,6 +4,7 @@ const path = require('path');
 const { CrucibleCore } = require('../../crucible-core/src/index');
 const TwilioService = require('./services/twilio');
 const userLock = require('./services/userLock');
+const jobQueue = require('./services/jobQueue');
 
 const app = express();
 
@@ -285,6 +286,49 @@ app.post('/lock-test/unlock', async (req, res) => {
   try {
     await userLock.unlockUser(userId);
     res.json({ success: true, message: `User ${userId} unlocked.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Job Queue Test Endpoints (for local DynamoDB testing)
+app.post('/job-test/enqueue', async (req, res) => {
+  try {
+    const jobId = await jobQueue.enqueueJob(req.body);
+    res.json({ success: true, jobId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/job-test/pending', async (req, res) => {
+  try {
+    const jobs = await jobQueue.getPendingJobs(10);
+    console.log('getPendingJobs returned:', jobs);
+    console.log('typeof jobs:', typeof jobs);
+    console.log('jobs.length:', jobs ? jobs.length : 'null/undefined');
+    res.json({ jobs });
+  } catch (err) {
+    console.error('Error in /job-test/pending:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/job-test/:jobId', async (req, res) => {
+  try {
+    const job = await jobQueue.getJob(req.params.jobId);
+    res.json({ job });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/job-test/update', async (req, res) => {
+  const { jobId, status, result } = req.body;
+  if (!jobId || !status) return res.status(400).json({ error: 'jobId and status required' });
+  try {
+    await jobQueue.updateJobStatus(jobId, status, result);
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
