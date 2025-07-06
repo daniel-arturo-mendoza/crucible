@@ -33,6 +33,9 @@ app.use(cors());
 // Middleware: JSON body parsing
 app.use(express.json());
 
+// Middleware: URL-encoded form data parsing (for Twilio webhooks)
+app.use(express.urlencoded({ extended: true }));
+
 // Middleware: Logging
 app.use((req, res, next) => {
   const now = new Date().toISOString();
@@ -183,6 +186,9 @@ app.post('/whatsapp/crucible', async (req, res, next) => {
 // Webhook endpoint for incoming WhatsApp messages
 app.post('/whatsapp/webhook', async (req, res, next) => {
   try {
+    console.log('Full webhook request body:', JSON.stringify(req.body, null, 2));
+    console.log('Request headers:', JSON.stringify(req.headers, null, 2));
+    
     const { Body, From, To } = req.body;
     
     console.log('Incoming WhatsApp message:', { Body, From, To });
@@ -197,7 +203,13 @@ app.post('/whatsapp/webhook', async (req, res, next) => {
     const providers = ['openai', 'deepseek'];
     
     try {
-      const crucibleResponse = await crucible.queryAndSynthesize(prompt, providers);
+      // Add timeout to Crucible processing
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Processing timeout')), 25000); // 25 second timeout
+      });
+      
+      const cruciblePromise = crucible.queryAndSynthesize(prompt, providers);
+      const crucibleResponse = await Promise.race([cruciblePromise, timeoutPromise]);
       
       // Send response back to the sender
       const senderNumber = From.replace('whatsapp:', '');
@@ -210,13 +222,19 @@ app.post('/whatsapp/webhook', async (req, res, next) => {
     } catch (crucibleError) {
       console.error('Error processing with Crucible:', crucibleError);
       
-      // Send error message to user
+      // Send appropriate error message to user
       const senderNumber = From.replace('whatsapp:', '');
-      await twilioService.sendWhatsAppMessage(senderNumber, 'Sorry, I encountered an error processing your request. Please try again.');
+      let errorMessage = 'Sorry, I encountered an error processing your request. Please try again.';
+      
+      if (crucibleError.message === 'Processing timeout') {
+        errorMessage = 'Sorry, your request took too long to process. Please try a simpler question or try again later.';
+      }
+      
+      await twilioService.sendWhatsAppMessage(senderNumber, errorMessage);
       
       res.json({ 
         success: false, 
-        error: 'Error processing with Crucible'
+        error: crucibleError.message
       });
     }
   } catch (err) {
