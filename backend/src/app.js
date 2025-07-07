@@ -3,6 +3,9 @@ const cors = require('cors');
 const path = require('path');
 const { CrucibleCore } = require('../../crucible-core/src/index');
 const TwilioService = require('./services/twilio');
+const userLock = require('./services/userLock');
+const jobQueue = require('./services/jobQueue');
+const AsyncWorker = require('./services/asyncWorker');
 
 const app = express();
 
@@ -26,6 +29,9 @@ const crucible = new CrucibleCore({
 
 // Initialize Twilio Service
 const twilioService = new TwilioService();
+
+// Initialize Async Worker
+const asyncWorker = new AsyncWorker();
 
 // Middleware: CORS
 app.use(cors());
@@ -115,34 +121,21 @@ app.get('/providers', (req, res) => {
   res.json({ providers });
 });
 
-// WhatsApp endpoints
-// Send WhatsApp message
-app.post('/whatsapp/send', async (req, res, next) => {
-  try {
-    const { to, message } = req.body;
-    
-    if (!to || !message) {
-      return res.status(400).json({ error: 'Phone number (to) and message are required' });
-    }
-
-    if (!twilioService.isConfigured()) {
-      return res.status(500).json({ error: 'Twilio is not properly configured' });
-    }
-
-    if (!twilioService.isValidPhoneNumber(to)) {
-      return res.status(400).json({ error: 'Invalid phone number format. Use international format (e.g., +1234567890)' });
-    }
-
-    const result = await twilioService.sendWhatsAppMessage(to, message);
-    res.json({ 
-      success: true, 
-      messageSid: result.sid,
-      message: 'WhatsApp message sent successfully'
-    });
-  } catch (err) {
-    next(err);
-  }
+// Test endpoint for DynamoDB configuration
+app.get('/test-config', (req, res) => {
+  res.json({
+    environment: {
+      USER_LOCKS_TABLE: process.env.USER_LOCKS_TABLE,
+      JOB_QUEUE_TABLE: process.env.JOB_QUEUE_TABLE,
+      TWILIO_CONFIGURED: !!process.env.TWILIO_ACCOUNT_SID,
+      OPENAI_CONFIGURED: !!process.env.OPENAI_API_KEY,
+      DEEPSEEK_CONFIGURED: !!process.env.DEEPSEEK_API_KEY
+    },
+    message: 'Configuration test endpoint'
+  });
 });
+
+
 
 // Send WhatsApp message with Crucible AI response
 app.post('/whatsapp/crucible', async (req, res, next) => {
@@ -184,7 +177,7 @@ app.post('/whatsapp/crucible', async (req, res, next) => {
 });
 
 // Webhook endpoint for incoming WhatsApp messages
-app.post('/whatsapp/webhook', async (req, res, next) => {
+app.post('/webhook/whatsapp', async (req, res, next) => {
   try {
     console.log('Full webhook request body:', JSON.stringify(req.body, null, 2));
     console.log('Request headers:', JSON.stringify(req.headers, null, 2));
@@ -198,47 +191,454 @@ app.post('/whatsapp/webhook', async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid webhook payload' });
     }
 
-    // Process the incoming message with Crucible
     const prompt = Body.trim();
-    const providers = ['openai', 'deepseek'];
-    
-    try {
-      // Add timeout to Crucible processing
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Processing timeout')), 25000); // 25 second timeout
-      });
-      
-      const cruciblePromise = crucible.queryAndSynthesize(prompt, providers);
-      const crucibleResponse = await Promise.race([cruciblePromise, timeoutPromise]);
-      
-      // Send response back to the sender
-      const senderNumber = From.replace('whatsapp:', '');
-      await twilioService.sendCrucibleResponse(senderNumber, prompt, crucibleResponse);
-      
-      res.json({ 
-        success: true, 
-        message: 'WhatsApp message processed and response sent'
-      });
-    } catch (crucibleError) {
-      console.error('Error processing with Crucible:', crucibleError);
-      
-      // Send appropriate error message to user
-      const senderNumber = From.replace('whatsapp:', '');
-      let errorMessage = 'Sorry, I encountered an error processing your request. Please try again.';
-      
-      if (crucibleError.message === 'Processing timeout') {
-        errorMessage = 'Sorry, your request took too long to process. Please try a simpler question or try again later.';
-      }
-      
-      await twilioService.sendWhatsAppMessage(senderNumber, errorMessage);
-      
-      res.json({ 
+    const senderNumber = From.replace('whatsapp:', '');
+    const userId = `whatsapp:${senderNumber}`;
+
+    // Check if user is already locked (processing another request)
+    const isUserLocked = await userLock.isUserLocked(userId);
+    if (isUserLocked) {
+      console.log(`User ${userId} is already locked, sending busy message`);
+      await twilioService.sendWhatsAppMessage(senderNumber, 'I\'m still processing your previous request. Please wait a moment before sending another message.');
+      return res.status(429).json({ 
         success: false, 
-        error: crucibleError.message
+        error: 'User is busy processing another request',
+        message: 'Please wait a moment before sending another message'
       });
     }
+
+    // Check if user already has a pending or processing job
+    const existingJobs = await jobQueue.getJobsByUser(userId, 1);
+    const hasActiveJob = existingJobs.some(job => 
+      job.status === 'pending' || job.status === 'processing'
+    );
+    
+    if (hasActiveJob) {
+      console.log(`User ${userId} already has an active job, sending busy message`);
+      await twilioService.sendWhatsAppMessage(senderNumber, 'I\'m still processing your previous request. Please wait a moment before sending another message.');
+      return res.status(429).json({ 
+        success: false, 
+        error: 'User already has a request being processed',
+        message: 'Please wait a moment before sending another message'
+      });
+    }
+
+    // Enqueue the job for async processing
+    const jobData = {
+      userId,
+      prompt,
+      channel: 'whatsapp',
+      channelData: {
+        phoneNumber: senderNumber
+      },
+      priority: 'normal'
+    };
+
+    const jobId = await jobQueue.enqueueJob(jobData);
+    console.log(`Enqueued job ${jobId} for user ${userId}`);
+
+    // Send immediate acknowledgment
+    await twilioService.sendWhatsAppMessage(senderNumber, '🤖 I\'m processing your question. You\'ll receive my response shortly!');
+    
+    res.json({ 
+      success: true, 
+      jobId,
+      status: 'pending',
+      message: 'WhatsApp message enqueued for async processing'
+    });
   } catch (err) {
+    console.error('Error in WhatsApp webhook:', err);
     next(err);
+  }
+});
+
+// Webhook endpoint for WhatsApp message status updates
+app.post('/webhook/whatsapp-status', async (req, res, next) => {
+  try {
+    const { MessageSid, MessageStatus, ErrorCode, To } = req.body;
+    
+    console.log('WhatsApp status webhook:', { MessageSid, MessageStatus, ErrorCode, To });
+    
+    // Log the status update (you can add more logic here if needed)
+    if (MessageStatus === 'failed') {
+      console.error(`WhatsApp message ${MessageSid} failed:`, ErrorCode);
+    } else {
+      console.log(`WhatsApp message ${MessageSid} status: ${MessageStatus}`);
+    }
+    
+    res.json({ success: true, message: 'Status update received' });
+  } catch (err) {
+    console.error('Error in WhatsApp status webhook:', err);
+    next(err);
+  }
+});
+
+// WhatsApp Message Sending
+app.post('/whatsapp/send', async (req, res, next) => {
+  try {
+    const { to, message } = req.body;
+    
+    if (!to || !message) {
+      return res.status(400).json({ error: 'to and message are required' });
+    }
+
+    // Validate phone number
+    if (!twilioService.isValidPhoneNumber(to)) {
+      return res.status(400).json({ error: 'Invalid phone number format' });
+    }
+
+    const result = await twilioService.sendWhatsAppMessage(to, message);
+    
+    res.json({ 
+      success: true, 
+      messageId: result.sid,
+      message: 'WhatsApp message sent successfully'
+    });
+  } catch (err) {
+    console.error('Error sending WhatsApp message:', err);
+    next(err);
+  }
+});
+
+// Mobile App Endpoints
+// Submit question from mobile app
+app.post('/mobile/question', async (req, res, next) => {
+  try {
+    const { userId, prompt, priority = 'normal' } = req.body;
+    
+    if (!userId || !prompt) {
+      return res.status(400).json({ error: 'userId and prompt are required' });
+    }
+
+    // Check if user is already locked (processing another request)
+    const isUserLocked = await userLock.isUserLocked(userId);
+    if (isUserLocked) {
+      return res.status(429).json({ 
+        error: 'User is busy processing another request',
+        message: 'Please wait a moment before sending another question'
+      });
+    }
+
+    // Check if user already has a pending or processing job
+    const existingJobs = await jobQueue.getJobsByUser(userId, 1);
+    const hasActiveJob = existingJobs.some(job => 
+      job.status === 'pending' || job.status === 'processing'
+    );
+    
+    if (hasActiveJob) {
+      return res.status(429).json({ 
+        error: 'User already has a request being processed',
+        message: 'Please wait a moment before sending another question'
+      });
+    }
+
+    // Enqueue the job for async processing
+    const jobData = {
+      userId,
+      prompt,
+      channel: 'mobile',
+      channelData: {
+        // Add any mobile-specific data here
+        appVersion: req.body.appVersion,
+        deviceId: req.body.deviceId
+      },
+      priority
+    };
+
+    const jobId = await jobQueue.enqueueJob(jobData);
+    console.log(`Enqueued mobile job ${jobId} for user ${userId}`);
+
+    res.json({ 
+      success: true, 
+      jobId,
+      message: 'Question submitted for processing',
+      status: 'pending'
+    });
+  } catch (err) {
+    console.error('Error in mobile question endpoint:', err);
+    next(err);
+  }
+});
+
+// Register FCM token for push notifications
+app.post('/mobile/register-token', async (req, res, next) => {
+  try {
+    const { userId, fcmToken, appVersion, deviceId, platform } = req.body;
+    
+    if (!userId || !fcmToken) {
+      return res.status(400).json({ error: 'userId and fcmToken are required' });
+    }
+
+    const UserManager = require('./services/userManager');
+    const userManager = new UserManager();
+
+    // Register or update FCM token
+    await userManager.registerFCMToken(userId, fcmToken, {
+      appVersion,
+      deviceId,
+      platform,
+      lastActivity: Date.now()
+    });
+
+    res.json({ 
+      success: true, 
+      message: 'FCM token registered successfully',
+      pushNotificationsEnabled: true
+    });
+  } catch (err) {
+    console.error('Error registering FCM token:', err);
+    next(err);
+  }
+});
+
+// Update push notification preferences
+app.post('/mobile/push-preferences', async (req, res, next) => {
+  try {
+    const { userId, enabled } = req.body;
+    
+    if (!userId || typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'userId and enabled (boolean) are required' });
+    }
+
+    const UserManager = require('./services/userManager');
+    const userManager = new UserManager();
+
+    // Update push notification preferences
+    await userManager.updatePushNotificationPreferences(userId, enabled);
+
+    res.json({ 
+      success: true, 
+      message: `Push notifications ${enabled ? 'enabled' : 'disabled'}`,
+      pushNotificationsEnabled: enabled
+    });
+  } catch (err) {
+    console.error('Error updating push preferences:', err);
+    next(err);
+  }
+});
+
+// Unregister FCM token
+app.delete('/mobile/unregister-token', async (req, res, next) => {
+  try {
+    const { userId } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+
+    const UserManager = require('./services/userManager');
+    const userManager = new UserManager();
+
+    // Remove FCM token
+    await userManager.removeFCMToken(userId);
+
+    res.json({ 
+      success: true, 
+      message: 'FCM token unregistered successfully'
+    });
+  } catch (err) {
+    console.error('Error unregistering FCM token:', err);
+    next(err);
+  }
+});
+
+// Get job status (for mobile app polling)
+app.get('/mobile/job/:jobId', async (req, res, next) => {
+  try {
+    const { jobId } = req.params;
+    const userId = req.headers['x-user-id']; // Get user ID from header
+    
+    const job = await jobQueue.getJob(jobId);
+    
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+
+    if (!userId) {
+      return res.status(401).json({ error: 'User ID required in x-user-id header' });
+    }
+
+    // Verify user owns this job
+    if (job.userId !== userId) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    res.json({
+      success: true,
+      job: {
+        jobId: job.jobId,
+        status: job.status,
+        prompt: job.prompt,
+        createdAt: job.createdAt,
+        updatedAt: job.updatedAt,
+        result: job.result,
+        channel: job.channel
+      }
+    });
+  } catch (err) {
+    console.error('Error getting job status:', err);
+    next(err);
+  }
+});
+
+// Get user's job history (for mobile app)
+app.get('/mobile/jobs/:userId', async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+    const { limit = 20, status } = req.query;
+    
+    let jobs = await jobQueue.getJobsByUser(userId, parseInt(limit));
+    
+    // Filter by status if specified
+    if (status) {
+      jobs = jobs.filter(job => job.status === status);
+    }
+
+    res.json({
+      success: true,
+      jobs: jobs.map(job => ({
+        jobId: job.jobId,
+        status: job.status,
+        prompt: job.prompt,
+        createdAt: job.createdAt,
+        updatedAt: job.updatedAt,
+        result: job.result,
+        channel: job.channel
+      }))
+    });
+  } catch (err) {
+    console.error('Error getting user jobs:', err);
+    next(err);
+  }
+});
+
+// User Locking Test Endpoints (for local DynamoDB testing)
+app.post('/lock-test/lock', async (req, res) => {
+  const { userId, ttlSeconds } = req.body;
+  if (!userId) return res.status(400).json({ error: 'userId required' });
+  try {
+    await userLock.lockUser(userId, ttlSeconds);
+    res.json({ success: true, message: `User ${userId} locked.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/lock-test/status/:userId', async (req, res) => {
+  const { userId } = req.params;
+  try {
+    const locked = await userLock.isUserLocked(userId);
+    res.json({ userId, locked });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/lock-test/unlock', async (req, res) => {
+  const { userId } = req.body;
+  if (!userId) return res.status(400).json({ error: 'userId required' });
+  try {
+    await userLock.unlockUser(userId);
+    res.json({ success: true, message: `User ${userId} unlocked.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Job Queue Test Endpoints (for local DynamoDB testing)
+app.post('/job-test/enqueue', async (req, res) => {
+  try {
+    const jobId = await jobQueue.enqueueJob(req.body);
+    res.json({ success: true, jobId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/job-test/pending', async (req, res) => {
+  try {
+    const jobs = await jobQueue.getPendingJobs(10);
+    console.log('getPendingJobs returned:', jobs);
+    console.log('typeof jobs:', typeof jobs);
+    console.log('jobs.length:', jobs ? jobs.length : 'null/undefined');
+    res.json({ jobs });
+  } catch (err) {
+    console.error('Error in /job-test/pending:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/job-test/:jobId', async (req, res) => {
+  try {
+    const job = await jobQueue.getJob(req.params.jobId);
+    res.json({ job });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/job-test/update', async (req, res) => {
+  const { jobId, status, result } = req.body;
+  if (!jobId || !status) return res.status(400).json({ error: 'jobId and status required' });
+  try {
+    await jobQueue.updateJobStatus(jobId, status, result);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Async Worker Control Endpoints
+app.post('/worker/start', async (req, res) => {
+  try {
+    await asyncWorker.start();
+    res.json({ success: true, message: 'Async worker started' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/worker/stop', async (req, res) => {
+  try {
+    asyncWorker.stop();
+    res.json({ success: true, message: 'Async worker stopped' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/worker/status', async (req, res) => {
+  try {
+    const status = asyncWorker.getStatus();
+    res.json(status);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Manual job processing endpoint (for testing and debugging)
+app.post('/worker/process', async (req, res) => {
+  try {
+    const { maxJobs = 5 } = req.body;
+    let processedCount = 0;
+    
+    // Process jobs manually
+    for (let i = 0; i < maxJobs; i++) {
+      const processed = await asyncWorker.processNextJob();
+      if (processed) {
+        processedCount++;
+      } else {
+        break; // No more jobs to process
+      }
+    }
+    
+    res.json({ 
+      success: true, 
+      processedCount,
+      message: `Processed ${processedCount} jobs`
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
