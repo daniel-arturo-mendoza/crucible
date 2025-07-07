@@ -1,12 +1,16 @@
 const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
-const { DynamoDBDocumentClient, PutCommand, GetCommand, UpdateCommand, QueryCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
+const { DynamoDBDocumentClient, PutCommand, GetCommand, UpdateCommand, QueryCommand, ScanCommand, DeleteCommand } = require('@aws-sdk/lib-dynamodb');
 const { v4: uuidv4 } = require('uuid');
 
 const JOB_QUEUE_TABLE = process.env.JOB_QUEUE_TABLE;
 const client = DynamoDBDocumentClient.from(new DynamoDBClient({
   endpoint: process.env.NODE_ENV === 'production' ? undefined : 'http://localhost:8000',
   region: 'local'
-}));
+}), {
+  marshallOptions: {
+    removeUndefinedValues: true
+  }
+});
 
 /**
  * Enqueue a new job
@@ -183,11 +187,25 @@ async function getJobsByChannel(channel, limit = 20) {
   return result.Items || [];
 }
 
+/**
+ * Delete a job (for cleanup)
+ * @param {string} jobId
+ */
+async function deleteJob(jobId) {
+  await client.send(new DeleteCommand({
+    TableName: JOB_QUEUE_TABLE,
+    Key: { jobId }
+  }));
+  console.log(`Deleted job ${jobId}`);
+}
+
 module.exports = {
   enqueueJob,
+  addJob: enqueueJob, // Alias for tests
   getJob,
   updateJobStatus,
   getPendingJobs,
   getJobsByUser,
-  getJobsByChannel
+  getJobsByChannel,
+  deleteJob
 }; 

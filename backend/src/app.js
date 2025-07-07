@@ -135,34 +135,7 @@ app.get('/test-config', (req, res) => {
   });
 });
 
-// WhatsApp endpoints
-// Send WhatsApp message
-app.post('/whatsapp/send', async (req, res, next) => {
-  try {
-    const { to, message } = req.body;
-    
-    if (!to || !message) {
-      return res.status(400).json({ error: 'Phone number (to) and message are required' });
-    }
 
-    if (!twilioService.isConfigured()) {
-      return res.status(500).json({ error: 'Twilio is not properly configured' });
-    }
-
-    if (!twilioService.isValidPhoneNumber(to)) {
-      return res.status(400).json({ error: 'Invalid phone number format. Use international format (e.g., +1234567890)' });
-    }
-
-    const result = await twilioService.sendWhatsAppMessage(to, message);
-    res.json({ 
-      success: true, 
-      messageSid: result.sid,
-      message: 'WhatsApp message sent successfully'
-    });
-  } catch (err) {
-    next(err);
-  }
-});
 
 // Send WhatsApp message with Crucible AI response
 app.post('/whatsapp/crucible', async (req, res, next) => {
@@ -204,7 +177,7 @@ app.post('/whatsapp/crucible', async (req, res, next) => {
 });
 
 // Webhook endpoint for incoming WhatsApp messages
-app.post('/whatsapp/webhook', async (req, res, next) => {
+app.post('/webhook/whatsapp', async (req, res, next) => {
   try {
     console.log('Full webhook request body:', JSON.stringify(req.body, null, 2));
     console.log('Request headers:', JSON.stringify(req.headers, null, 2));
@@ -227,9 +200,26 @@ app.post('/whatsapp/webhook', async (req, res, next) => {
     if (isUserLocked) {
       console.log(`User ${userId} is already locked, sending busy message`);
       await twilioService.sendWhatsAppMessage(senderNumber, 'I\'m still processing your previous request. Please wait a moment before sending another message.');
-      return res.json({ 
-        success: true, 
-        message: 'User is busy, sent busy message'
+      return res.status(429).json({ 
+        success: false, 
+        error: 'User is busy processing another request',
+        message: 'Please wait a moment before sending another message'
+      });
+    }
+
+    // Check if user already has a pending or processing job
+    const existingJobs = await jobQueue.getJobsByUser(userId, 1);
+    const hasActiveJob = existingJobs.some(job => 
+      job.status === 'pending' || job.status === 'processing'
+    );
+    
+    if (hasActiveJob) {
+      console.log(`User ${userId} already has an active job, sending busy message`);
+      await twilioService.sendWhatsAppMessage(senderNumber, 'I\'m still processing your previous request. Please wait a moment before sending another message.');
+      return res.status(429).json({ 
+        success: false, 
+        error: 'User already has a request being processed',
+        message: 'Please wait a moment before sending another message'
       });
     }
 
@@ -253,10 +243,59 @@ app.post('/whatsapp/webhook', async (req, res, next) => {
     res.json({ 
       success: true, 
       jobId,
+      status: 'pending',
       message: 'WhatsApp message enqueued for async processing'
     });
   } catch (err) {
     console.error('Error in WhatsApp webhook:', err);
+    next(err);
+  }
+});
+
+// Webhook endpoint for WhatsApp message status updates
+app.post('/webhook/whatsapp-status', async (req, res, next) => {
+  try {
+    const { MessageSid, MessageStatus, ErrorCode, To } = req.body;
+    
+    console.log('WhatsApp status webhook:', { MessageSid, MessageStatus, ErrorCode, To });
+    
+    // Log the status update (you can add more logic here if needed)
+    if (MessageStatus === 'failed') {
+      console.error(`WhatsApp message ${MessageSid} failed:`, ErrorCode);
+    } else {
+      console.log(`WhatsApp message ${MessageSid} status: ${MessageStatus}`);
+    }
+    
+    res.json({ success: true, message: 'Status update received' });
+  } catch (err) {
+    console.error('Error in WhatsApp status webhook:', err);
+    next(err);
+  }
+});
+
+// WhatsApp Message Sending
+app.post('/whatsapp/send', async (req, res, next) => {
+  try {
+    const { to, message } = req.body;
+    
+    if (!to || !message) {
+      return res.status(400).json({ error: 'to and message are required' });
+    }
+
+    // Validate phone number
+    if (!twilioService.isValidPhoneNumber(to)) {
+      return res.status(400).json({ error: 'Invalid phone number format' });
+    }
+
+    const result = await twilioService.sendWhatsAppMessage(to, message);
+    
+    res.json({ 
+      success: true, 
+      messageId: result.sid,
+      message: 'WhatsApp message sent successfully'
+    });
+  } catch (err) {
+    console.error('Error sending WhatsApp message:', err);
     next(err);
   }
 });
@@ -276,6 +315,19 @@ app.post('/mobile/question', async (req, res, next) => {
     if (isUserLocked) {
       return res.status(429).json({ 
         error: 'User is busy processing another request',
+        message: 'Please wait a moment before sending another question'
+      });
+    }
+
+    // Check if user already has a pending or processing job
+    const existingJobs = await jobQueue.getJobsByUser(userId, 1);
+    const hasActiveJob = existingJobs.some(job => 
+      job.status === 'pending' || job.status === 'processing'
+    );
+    
+    if (hasActiveJob) {
+      return res.status(429).json({ 
+        error: 'User already has a request being processed',
         message: 'Please wait a moment before sending another question'
       });
     }
@@ -394,7 +446,7 @@ app.delete('/mobile/unregister-token', async (req, res, next) => {
 app.get('/mobile/job/:jobId', async (req, res, next) => {
   try {
     const { jobId } = req.params;
-    const { userId } = req.query; // Optional: verify user owns this job
+    const userId = req.headers['x-user-id']; // Get user ID from header
     
     const job = await jobQueue.getJob(jobId);
     
@@ -402,8 +454,12 @@ app.get('/mobile/job/:jobId', async (req, res, next) => {
       return res.status(404).json({ error: 'Job not found' });
     }
 
-    // Optional: verify user owns this job
-    if (userId && job.userId !== userId) {
+    if (!userId) {
+      return res.status(401).json({ error: 'User ID required in x-user-id header' });
+    }
+
+    // Verify user owns this job
+    if (job.userId !== userId) {
       return res.status(403).json({ error: 'Access denied' });
     }
 

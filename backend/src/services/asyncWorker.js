@@ -28,13 +28,14 @@ class AsyncWorker {
     this.responseRouter = new ResponseRouter();
 
     // Configuration
-    this.pollInterval = options.pollInterval || 5000; // 5 seconds
+    // Use a much shorter polling interval in test mode
+    this.pollInterval = process.env.NODE_ENV === 'test' ? 100 : (options.pollInterval || 5000); // 5 seconds
     this.maxConcurrentJobs = options.maxConcurrentJobs || 3;
     this.maxExecutionTime = options.maxExecutionTime || 600000; // 10 minutes (Lambda has 15 min max)
     this.maxJobProcessingTime = options.maxJobProcessingTime || 300000; // 5 minutes per job
 
     // Worker state
-    this.isRunning = false;
+    this._running = false;
     this.processingJobs = new Set();
     this.pollingInterval = null;
     this.startTime = null;
@@ -44,13 +45,13 @@ class AsyncWorker {
    * Start the async worker
    */
   async start() {
-    if (this.isRunning) {
+    if (this._running) {
       console.log('Async worker is already running');
       return;
     }
 
     console.log('Starting async worker...');
-    this.isRunning = true;
+    this._running = true;
     this.startTime = Date.now();
 
     // Start polling for jobs
@@ -58,15 +59,52 @@ class AsyncWorker {
   }
 
   /**
-   * Stop the async worker
+   * Force stop the worker immediately (for tests)
    */
-  stop() {
-    console.log('Stopping async worker...');
-    this.isRunning = false;
+  forceStop() {
+    console.log('Force stopping async worker...');
+    this._running = false;
     
     if (this.pollingInterval) {
       clearInterval(this.pollingInterval);
       this.pollingInterval = null;
+    }
+    
+    // Clear any processing jobs immediately
+    this.processingJobs.clear();
+  }
+
+  /**
+   * Stop the worker and wait for all operations to complete
+   */
+  async stop() {
+    console.log('Stopping async worker...');
+    this._running = false;
+    
+    if (this.pollingInterval) {
+      clearInterval(this.pollingInterval);
+      this.pollingInterval = null;
+    }
+
+    // Wait for any currently processing jobs to complete
+    if (this.processingJobs.size > 0) {
+      console.log(`Waiting for ${this.processingJobs.size} jobs to complete...`);
+      await new Promise(resolve => {
+        const checkInterval = setInterval(() => {
+          if (this.processingJobs.size === 0) {
+            clearInterval(checkInterval);
+            resolve();
+          }
+        }, 100);
+        
+        // Timeout after 10 seconds to prevent hanging
+        setTimeout(() => {
+          clearInterval(checkInterval);
+          console.warn('Timeout waiting for jobs to complete, forcing stop');
+          this.processingJobs.clear();
+          resolve();
+        }, 10000);
+      });
     }
   }
 
@@ -75,7 +113,7 @@ class AsyncWorker {
    */
   startPolling() {
     this.pollingInterval = setInterval(async () => {
-      if (!this.isRunning) {
+      if (!this._running) {
         return;
       }
 
@@ -110,6 +148,13 @@ class AsyncWorker {
     
     // Stop if we have less than 30 seconds remaining
     return timeRemaining < 30000;
+  }
+
+  /**
+   * Check if the worker is currently running
+   */
+  isRunning() {
+    return this._running;
   }
 
   /**

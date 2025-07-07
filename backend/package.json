@@ -9,7 +9,20 @@
     "deploy": "npm run build && npx serverless deploy",
     "deploy:prod": "npm run build && npx serverless deploy --stage prod",
     "build": "npm install --production && cp ../crucible-synthesis-config.json .",
-    "remove": "npx serverless remove"
+    "remove": "npx serverless remove",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:integration": "jest --testPathPattern=tests/integration",
+    "test:unit": "jest --testPathPattern=tests/unit",
+    "test:mobile": "jest --testPathPattern=mobile-app.test.js",
+    "test:whatsapp": "jest --testPathPattern=whatsapp.test.js",
+    "test:worker": "jest --testPathPattern=async-worker.test.js",
+    "test-unified-worker": "node test-unified-worker.js",
+    "setup:test-db": "node scripts/create-tables.js",
+    "start:test-db": "docker-compose up -d",
+    "stop:test-db": "docker-compose down",
+    "test:full": "npm run start:test-db && sleep 5 && npm run setup:test-db && npm run test:integration && npm run stop:test-db"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.840.0",
@@ -25,10 +38,12 @@
   },
   "devDependencies": {
     "dotenv": "^17.0.0",
+    "jest": "^29.7.0",
     "nodemon": "^3.0.2",
     "serverless": "^3.40.0",
     "serverless-dotenv-plugin": "^6.0.0",
     "serverless-esbuild": "^1.55.1",
-    "serverless-offline": "^13.3.0"
+    "serverless-offline": "^13.3.0",
+    "supertest": "^6.3.3"
   }
 }

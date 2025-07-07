@@ -1,6 +1,6 @@
 // Load environment variables (optional for Lambda)
 try {
-  require('dotenv').config({ path: '../../.env' });
+  require('dotenv').config({ path: '../.env' });
 } catch (error) {
   // dotenv not available or .env file not found - use Lambda environment variables
   console.log('Using Lambda environment variables');

@@ -1,3 +1,4 @@
+require('dotenv').config({ path: '../.env' });
 const AsyncWorker = require('./src/services/asyncWorker');
 const jobQueue = require('./src/services/jobQueue');
 
